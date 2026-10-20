@@ -42,8 +42,9 @@ http://127.0.0.1:8765
 >
 > 1. Use `py -3`, not `python`. On many Windows machines `python` opens the
 >    Microsoft Store instead of running your code.
-> 2. The page styling and charts load from the internet (Tailwind, Chart.js,
->    and the Inter font), so the first load needs a connection.
+> 2. No internet connection is needed. The page styling (Tailwind), charts
+>    (Chart.js), and the Inter font are bundled with the program in
+>    `neural_csv/static/vendor/` and served locally.
 
 To stop the program, go back to the terminal window and press `Ctrl+C`.
 
@@ -226,6 +227,7 @@ retrains from the saved rows so the model always matches the history.
 | `neural_csv/engine.py` | All the learning logic: reading CSVs, training, predicting, reverse forecasting, saving history. |
 | `neural_csv/web.py` | The local web server and its API (runs on port 8765). |
 | `neural_csv/templates/index.html` | The page you see — layout, colours, charts, buttons. Styled with Tailwind. |
+| `neural_csv/static/vendor/` | Bundled copies of Tailwind, Chart.js, and the Inter font, so the page works fully offline. |
 | `neural_csv/charts.py` | Matplotlib versions of the graphs, used by the tests. |
 | `neural_csv/gui.py` | The old desktop (tkinter) window. Kept for reference; `main.py` no longer opens it. |
 | `tests/test_engine.py` | Automated checks for the learning logic. |
@@ -349,7 +351,7 @@ folder (`tests/_tmp`), so they do not touch your saved model.
 | Problem | Likely fix |
 | --- | --- |
 | `'python' is not recognized` or the Microsoft Store opens | Use `py -3` instead of `python`. |
-| Page opens but looks unstyled | The styling loads from the internet — check your connection and refresh. |
+| Page opens but looks unstyled | Hard-refresh the browser (Ctrl+F5) so it drops the old cached page. The styling is bundled locally, so no connection is needed. |
 | `Address already in use` / port 8765 busy | The program is already running in another window, or change the port (see Customize). |
 | “This file is missing prediction variables…” | Your prediction file has fewer indicator columns than the model was trained on. Add the missing columns (values can be blank for reverse forecasting, but prediction needs them filled). |
 | Training says it needs at least 4 rows | Add more rows with a target value — the 70 / 30 split needs a few rows on each side. |
