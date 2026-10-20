@@ -250,6 +250,44 @@ def test_reverse_forecast_uses_saved_training_only() -> None:
     assert set(load_training_history()["id"].map(str)) == {f"H{index:02d}" for index in range(1, 11)}
 
 
+def test_field_names_may_vary_positionally() -> None:
+    reset_system()
+    rows = []
+    for index in range(1, 11):
+        area = 700 + index * 100
+        rooms = 1 + (index % 4)
+        years = index
+        rows.append(
+            {
+                "patient_no": f"P{index:02d}",
+                "outcome_score": 50 * area + 10000 * rooms - 500 * years,
+                "area_m2": area,
+                "room_count": rooms,
+                "years_old": years,
+            }
+        )
+    result = train_model(pd.DataFrame(rows), task="regression")
+    assert result.id_column == "patient_no"
+    assert result.target == "outcome_score"
+    assert result.features == ["area_m2", "room_count", "years_old"]
+
+    # Every field renamed: column 1 is still the ID, column 2 the target,
+    # and columns 3 onward map onto the trained indicators by position.
+    query = pd.DataFrame(
+        [{"record_code": "Q1", "result_value": None, "sq_area": 1250, "rooms_n": 2, "age_n": 5}]
+    )
+    predicted = predict(query)
+    assert abs(float(predicted.loc[0, "outcome_score"]) - 80000) / 80000 < 0.05
+
+    known = rows[3]
+    reverse_query = pd.DataFrame(
+        [{"record_code": "Q2", "result_value": known["outcome_score"], "sq_area": None, "rooms_n": None, "age_n": None}]
+    )
+    forecast = reverse_forecast(reverse_query)
+    assert list(forecast.columns[:5]) == ["record_code", "outcome_score", "area_m2", "room_count", "years_old"]
+    assert abs(float(forecast.loc[0, "area_m2"]) - known["area_m2"]) / known["area_m2"] < 0.15
+
+
 def test_schema_requires_two_columns() -> None:
     try:
         parse_schema(pd.DataFrame({"id": [1]}))
@@ -274,6 +312,7 @@ if __name__ == "__main__":
     test_target_only_prediction()
     test_classification_training()
     test_ten_sample_accurate_single_prediction()
+    test_field_names_may_vary_positionally()
     test_history_is_kept_until_explicit_reset()
     test_reverse_forecast_uses_saved_training_only()
     print("ok")

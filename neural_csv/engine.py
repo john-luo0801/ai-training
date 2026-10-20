@@ -309,6 +309,7 @@ def train_model(
             "id_column": schema.id_column,
             "target_column": target,
             "features": features,
+            "feature_columns": schema.feature_columns,
             "task": chosen_task,
         },
         STATE_PATH,
@@ -413,6 +414,11 @@ def predict(frame: pd.DataFrame) -> pd.DataFrame:
     if features:
         missing = [column for column in features if column not in prepared.columns]
         if missing:
+            # Field names may differ between files. Columns are positional, so
+            # map column 3 onward onto the trained indicators when counts match.
+            prepared = _rename_indicators_positionally(prepared, features)
+            missing = [column for column in features if column not in prepared.columns]
+        if missing:
             raise ValueError(
                 "This file is missing prediction variables the model was trained on: "
                 + ", ".join(missing)
@@ -454,6 +460,8 @@ def reverse_forecast(frame: pd.DataFrame) -> pd.DataFrame:
     if schema.target_column != bundle["target"]:
         prepared = prepared.rename(columns={schema.target_column: bundle["target"]})
         schema = parse_schema(prepared)
+    prepared = _rename_indicators_positionally(prepared, features)
+    schema = parse_schema(prepared)
     target = bundle["target"]
     if prepared[target].isna().all():
         raise ValueError("Reverse forecasting needs values in the target column (column 2).")
@@ -522,17 +530,36 @@ def _id_key(value) -> str:
     return text
 
 
+def _rename_indicators_positionally(frame: pd.DataFrame, expected: list[str]) -> pd.DataFrame:
+    """Map columns 3 onward onto ``expected`` by position when names differ.
+
+    Only applies when the file has exactly as many indicator columns as
+    expected, so adding or removing a dimension is never silently remapped.
+    """
+    if not expected:
+        return frame
+    provided = parse_schema(frame).feature_columns
+    if provided == list(expected) or len(provided) != len(expected):
+        return frame
+    renamed = frame.rename(columns=dict(zip(provided, expected)))
+    if renamed.columns.duplicated().any():
+        return frame
+    return renamed
+
+
 def _align_to_saved_schema(frame: pd.DataFrame, state: dict | None) -> pd.DataFrame:
     """Rename column 1 and column 2 to the names used by the retained history."""
     if state is None:
         return frame.copy()
     schema = parse_schema(frame)
-    return frame.rename(
+    aligned = frame.rename(
         columns={
             schema.id_column: state["id_column"],
             schema.target_column: state["target_column"],
         }
     )
+    saved_indicators = list(state.get("feature_columns") or state.get("features") or [])
+    return _rename_indicators_positionally(aligned, saved_indicators)
 
 
 def _order_columns(frame: pd.DataFrame, id_column: str, target_column: str) -> pd.DataFrame:
