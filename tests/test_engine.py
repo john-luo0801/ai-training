@@ -41,6 +41,28 @@ def _ten_row_houses() -> pd.DataFrame:
     return pd.DataFrame(rows)
 
 
+def test_qa_chart_draws_failed_bars() -> None:
+    figure = qa_figure(
+        {
+            "ids": ["H01", "H02", "H03"],
+            "actual": [1, 2, 3],
+            "predicted": [9, 8, 7],
+            "passed": [False, False, False],
+            "method": "leave-one-out",
+            "passed_count": 0,
+            "total": 3,
+            "task": "classification",
+            "rule": "exact label match",
+        }
+    )
+    lines = [line for line in figure.axes[0].get_lines() if line.get_linestyle() not in {"None", "none"}]
+    assert lines
+    assert len(lines[0].get_ydata()) > 2
+    assert all(abs(float(value)) < 1e-9 for value in lines[0].get_ydata())
+    assert lines[0].get_linewidth() >= 2
+    assert figure.axes[0].get_ylim()[1] > 1
+
+
 def test_schema_layout() -> None:
     frame = _ten_row_houses()
     schema = parse_schema(frame)
@@ -219,6 +241,7 @@ def test_schema_requires_two_columns() -> None:
 if __name__ == "__main__":
     engine.set_storage_dir(Path("tests/_tmp/models"))
     engine.reset_system()
+    test_qa_chart_draws_failed_bars()
     test_schema_layout()
     test_classification_inference()
     test_schema_requires_two_columns()
