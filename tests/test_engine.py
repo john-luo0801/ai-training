@@ -5,7 +5,7 @@ from pathlib import Path
 import pandas as pd
 
 import neural_csv.engine as engine
-from neural_csv.charts import actual_vs_predicted_figure, qa_figure
+from neural_csv.charts import actual_vs_predicted_figure, prediction_curve_figure, qa_figure
 from neural_csv.engine import (
     comparison_for_rows,
     infer_task,
@@ -39,6 +39,23 @@ def _ten_row_houses() -> pd.DataFrame:
             }
         )
     return pd.DataFrame(rows)
+
+
+def test_prediction_curve_is_continuous() -> None:
+    figure = prediction_curve_figure(
+        {
+            "train_ids": ["H01", "H02", "H03"],
+            "train_values": [10.0, 20.0, 30.0],
+            "pred_ids": ["H99"],
+            "pred_values": [40.0],
+            "target": "price",
+            "task": "regression",
+        }
+    )
+    lines = [line for line in figure.axes[0].get_lines() if line.get_linestyle() not in {"None", "none"}]
+    assert len(lines) >= 2
+    assert abs(float(lines[0].get_ydata()[-1]) - float(lines[1].get_ydata()[0])) < 1e-6
+    assert lines[0].get_color() != lines[1].get_color()
 
 
 def test_qa_chart_draws_failed_bars() -> None:
@@ -76,12 +93,14 @@ def test_ten_sample_accurate_single_prediction() -> None:
     train_frame = _ten_row_houses()
     result = train_model(train_frame, task="regression")
     assert result.rows == 10
-    assert result.metrics["mae"] < 50.0
-    assert result.metrics["r2"] > 0.99
+    assert result.metrics["train_rows"] == 7
+    assert result.metrics["test_rows"] == 3
+    assert result.metrics["evaluated_on"] == "test rows (30%)"
     assert engine.MODEL_PATH.exists()
-    assert len(result.comparison["actual"]) == 10
-    assert result.qa["method"] == "leave-one-out"
-    assert result.qa["total"] == 10
+    assert len(result.comparison["actual"]) == 3
+    assert result.comparison["source"] == "test rows (30%)"
+    assert result.qa["method"] == "holdout 30%"
+    assert result.qa["total"] == 3
     assert load_charts() is not None
     assert actual_vs_predicted_figure(result.comparison).axes[0].get_title().startswith("Actual vs predicted")
     assert "QA testing" in qa_figure(result.qa).axes[0].get_title()
@@ -108,8 +127,8 @@ def test_ten_sample_accurate_single_prediction() -> None:
     assert compared is not None
     assert compared["source"] == "prediction file"
     assert list(predicted.columns[:2]) == ["id", "price"]
-    # Relative error under 1% for a single prediction after 10-sample training.
-    assert abs(float(predicted.loc[0, "price"]) - expected) / expected < 0.01
+    # The network trains on 70% of the 10 rows. An in-range house should still land close.
+    assert abs(float(predicted.loc[0, "price"]) - expected) / expected < 0.02
 
 
 def test_dimension_management_drop_and_add() -> None:
@@ -130,7 +149,9 @@ def test_target_only_prediction() -> None:
 
     query = pd.DataFrame([{"id": "P1", "price": None}, {"id": "P2", "price": None}])
     predicted = predict(query)
-    mean_price = float(train_frame["price"].mean())
+    held_out = set(result.qa["ids"])
+    train_prices = train_frame.loc[~train_frame["id"].astype(str).isin(held_out), "price"]
+    mean_price = float(train_prices.mean())
     assert abs(float(predicted.loc[0, "price"]) - mean_price) < 1e-6
     assert abs(float(predicted.loc[1, "price"]) - mean_price) < 1e-6
 
@@ -241,6 +262,7 @@ def test_schema_requires_two_columns() -> None:
 if __name__ == "__main__":
     engine.set_storage_dir(Path("tests/_tmp/models"))
     engine.reset_system()
+    test_prediction_curve_is_continuous()
     test_qa_chart_draws_failed_bars()
     test_schema_layout()
     test_classification_inference()

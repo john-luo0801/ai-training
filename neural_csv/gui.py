@@ -10,10 +10,9 @@ from tkinter import filedialog, messagebox, ttk
 import pandas as pd
 from matplotlib.backends.backend_tkagg import FigureCanvasTkAgg
 
-from neural_csv.charts import actual_vs_predicted_figure, qa_figure
+from neural_csv.charts import prediction_curve_figure
 from neural_csv.engine import (
-    comparison_for_rows,
-    load_charts,
+    forecast_series,
     load_csv,
     load_training_history,
     model_summary,
@@ -56,6 +55,7 @@ class CsvNetworkApp(tk.Tk):
         self.predictions: pd.DataFrame | None = None
         self.comparison: dict | None = None
         self.qa: dict | None = None
+        self.forecast: dict | None = None
         self.graph_window: tk.Toplevel | None = None
         self._busy = False
 
@@ -134,10 +134,6 @@ class CsvNetworkApp(tk.Tk):
             anchor="w", padx=16, pady=(0, 10)
         )
 
-        saved = load_charts()
-        if saved is not None:
-            self.comparison, self.qa = saved
-
         self.work = tk.PanedWindow(
             self,
             orient=tk.VERTICAL,
@@ -215,7 +211,7 @@ class CsvNetworkApp(tk.Tk):
         steps = (
             ("01", "Open", "Choose a CSV. Training rows you have already saved stay on disk until you reset."),
             ("02", "Choose an action", "Train a model, predict the target, or reverse-forecast each indicator."),
-            ("03", "Review", "Read the metrics, inspect the table, and open the actual-versus-predicted and QA graphs."),
+            ("03", "Review", "Read the metrics and the table. A graph appears after you predict, not while you train."),
         )
         for column, (number, title, body) in enumerate(steps):
             self._info_card(cards, column, number, title, body)
@@ -463,9 +459,7 @@ class CsvNetworkApp(tk.Tk):
         for name, value in result.metrics.items():
             lines.append(f"{name}: {value}")
         lines.extend(result.warnings)
-        lines.append("Graphs: actual and predicted curves, and the QA curve (green mark = pass, red mark = fail).")
         self._set_result("\n".join(lines))
-        self._open_graphs()
 
     def _training_failed(self, message: str) -> None:
         self._set_busy(False)
@@ -587,65 +581,60 @@ class CsvNetworkApp(tk.Tk):
 
         threading.Thread(target=work, daemon=True).start()
 
-    def _prediction_finished(self, result: pd.DataFrame, original: pd.DataFrame) -> None:
+    def _prediction_finished(self, result: pd.DataFrame, _original: pd.DataFrame) -> None:
         self._set_busy(False)
         self.predictions = result
         self.save_button.configure(state="normal")
         schema = parse_schema(result)
         shown = min(len(result), RESULT_ROWS)
         message = f"Filled '{schema.target_column}' for {len(result)} row(s). Showing the first {shown}."
-        compared = comparison_for_rows(original, result)
-        if compared is not None and self.qa is not None:
-            self.comparison = compared
-            message += " Actual vs predicted now uses rows in this file that already had a target value."
+        try:
+            self.forecast = forecast_series(result)
+        except Exception as error:  # noqa: BLE001 - prediction succeeded; only the graph failed
+            self.forecast = None
+            message += f" Graph was not drawn: {error}"
+        else:
+            message += " The graph continues the retained training values into these predictions."
             self._open_graphs()
         self._set_result(message)
         self._show_table(result.head(RESULT_ROWS))
 
     def _open_graphs(self) -> None:
-        if self.comparison is None or self.qa is None:
-            messagebox.showinfo("No graphs yet", "Train a model first. Graphs are created with the training QA check.")
+        if self.forecast is None:
+            messagebox.showinfo("No graph yet", "Run a prediction first. Training does not open a graph.")
             return
         window = self.graph_window
         if window is None or not window.winfo_exists():
             window = tk.Toplevel(self)
-            window.title("Model graphs")
-            window.geometry("1160x620")
-            window.minsize(900, 480)
+            window.title("Prediction")
+            window.geometry("1080x560")
+            window.minsize(760, 420)
             window.configure(bg="#EFEAE2")
             window.columnconfigure(0, weight=1)
-            window.columnconfigure(1, weight=1)
             window.rowconfigure(1, weight=1)
             header = tk.Frame(window, bg="#141A24")
-            header.grid(row=0, column=0, columnspan=2, sticky="ew")
-            tk.Label(header, text="Model report", bg="#141A24", fg="#F4EFE6", font=("Georgia", 18)).pack(anchor="w", padx=20, pady=(14, 0))
+            header.grid(row=0, column=0, sticky="ew")
+            tk.Label(header, text="Prediction", bg="#141A24", fg="#F4EFE6", font=("Georgia", 18)).pack(anchor="w", padx=20, pady=(14, 0))
             tk.Label(
                 header,
-                text="Left curve: actual and predicted values. Right curve: QA testing. Green marks passed, red marks failed.",
+                text="One continuous line. Ink is retained training data. Bronze is the prediction.",
                 bg="#141A24",
                 fg="#C8BBA8",
                 font=(FONT, 10),
             ).pack(anchor="w", padx=20, pady=(2, 14))
-            window.left = tk.Frame(window, bg="#F7F4EE", highlightthickness=1, highlightbackground="#D9D0C3")
-            window.right = tk.Frame(window, bg="#F7F4EE", highlightthickness=1, highlightbackground="#D9D0C3")
-            window.left.grid(row=1, column=0, sticky="nsew", padx=(16, 8), pady=16)
-            window.right.grid(row=1, column=1, sticky="nsew", padx=(8, 16), pady=16)
+            window.chart = tk.Frame(window, bg="#F7F4EE", highlightthickness=1, highlightbackground="#D9D0C3")
+            window.chart.grid(row=1, column=0, sticky="nsew", padx=16, pady=16)
             window.canvases = []
             window.protocol("WM_DELETE_WINDOW", window.destroy)
             self.graph_window = window
         for canvas in window.canvases:
             canvas.get_tk_widget().destroy()
         window.canvases.clear()
-        panels = (
-            (window.left, actual_vs_predicted_figure(self.comparison)),
-            (window.right, qa_figure(self.qa)),
-        )
-        for frame, figure in panels:
-            canvas = FigureCanvasTkAgg(figure, master=frame)
-            canvas.draw()
-            widget = canvas.get_tk_widget()
-            widget.pack(fill="both", expand=True, padx=8, pady=8)
-            window.canvases.append(canvas)
+        figure = prediction_curve_figure(self.forecast)
+        canvas = FigureCanvasTkAgg(figure, master=window.chart)
+        canvas.draw()
+        canvas.get_tk_widget().pack(fill="both", expand=True, padx=8, pady=8)
+        window.canvases.append(canvas)
         window.deiconify()
         window.lift()
 
@@ -727,7 +716,7 @@ class CsvNetworkApp(tk.Tk):
             self.reverse_button.configure(state=state)
         if hasattr(self, "reset_button") and self.reset_button.winfo_exists():
             self.reset_button.configure(state=state)
-        if self.comparison is not None and self.qa is not None and not busy:
+        if self.forecast is not None and not busy:
             self.graph_button.configure(state="normal")
         elif busy:
             self.graph_button.configure(state="disabled")
@@ -737,7 +726,7 @@ class CsvNetworkApp(tk.Tk):
         if summary is None:
             self.model_var.set("No model saved yet.")
             return
-        if self.comparison is not None and self.qa is not None:
+        if self.forecast is not None:
             self.graph_button.configure(state="normal")
         retained = summary.get("retained_rows") or 0
         feature_text = ", ".join(summary["features"]) if summary["features"] else "target only"
@@ -794,6 +783,7 @@ class CsvNetworkApp(tk.Tk):
         reset_system()
         self.comparison = None
         self.qa = None
+        self.forecast = None
         self.graph_button.configure(state="disabled")
         if self.graph_window is not None and self.graph_window.winfo_exists():
             self.graph_window.destroy()

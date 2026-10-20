@@ -46,6 +46,70 @@ def actual_vs_predicted_figure(comparison: dict) -> Figure:
     return figure
 
 
+def prediction_curve_figure(series: dict) -> Figure:
+    """One continuous curve: retained training values, then the new predictions."""
+    figure = Figure(figsize=(10.2, 4.8), dpi=110, facecolor=PAPER)
+    axis = figure.add_subplot(111)
+    train_values = list(series["train_values"])
+    pred_values = list(series["pred_values"])
+    labels = [str(value) for value in series["train_ids"]] + [str(value) for value in series["pred_ids"]]
+    if series.get("task") == "regression":
+        train_numbers = [float(value) for value in train_values]
+        pred_numbers = [float(value) for value in pred_values]
+        ylabel = series["target"]
+    else:
+        encoded_train, encoded_pred, class_names = _encode_labels(train_values, pred_values)
+        train_numbers = encoded_train
+        pred_numbers = encoded_pred
+        ylabel = series["target"]
+        axis.set_yticks(range(len(class_names)))
+        axis.set_yticklabels(class_names)
+    split = len(train_numbers)
+    positions = list(range(split + len(pred_numbers)))
+    values = train_numbers + pred_numbers
+    smooth_x, smooth_y = _smooth(positions, values)
+    boundary = float(split - 1) if split else 0.0
+    train_x, train_y, pred_x, pred_y = _split_curve(smooth_x, smooth_y, boundary)
+    axis.plot(train_x, train_y, color=INK, linewidth=2.6, solid_capstyle="round", label="Training data", zorder=2)
+    axis.plot(pred_x, pred_y, color=BRONZE, linewidth=2.6, solid_capstyle="round", label="Predicted", zorder=2)
+    if split:
+        axis.plot(positions[:split], train_numbers, linestyle="None", marker="o", markersize=6.5, color=INK, markeredgecolor=PAPER, markeredgewidth=1.1, zorder=3)
+    if pred_numbers:
+        axis.plot(positions[split:], pred_numbers, linestyle="None", marker="o", markersize=7.5, color=BRONZE, markeredgecolor=PAPER, markeredgewidth=1.1, zorder=3)
+    axis.set_xticks(positions)
+    axis.set_xticklabels(labels, rotation=40, ha="right")
+    axis.set_xlabel("Record")
+    axis.set_ylabel(ylabel)
+    axis.set_title(f"{series['target']}: training data and predictions")
+    axis.legend(frameon=False, loc="best")
+    _polish(figure, axis)
+    return figure
+
+
+def _split_curve(xs: np.ndarray, ys: np.ndarray, boundary: float) -> tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray]:
+    """Cut one smooth curve at the last training record so the join stays continuous."""
+    if len(xs) == 0:
+        empty = np.asarray([])
+        return empty, empty, empty, empty
+    if boundary <= xs[0]:
+        return xs[:1], ys[:1], xs, ys
+    if boundary >= xs[-1]:
+        return xs, ys, xs[-1:], ys[-1:]
+    before = xs <= boundary
+    after = xs >= boundary
+    train_x = xs[before]
+    train_y = ys[before]
+    pred_x = xs[after]
+    pred_y = ys[after]
+    if len(train_x) == 0 or train_x[-1] != boundary:
+        joined = float(np.interp(boundary, xs, ys))
+        train_x = np.append(train_x, boundary)
+        train_y = np.append(train_y, joined)
+        pred_x = np.insert(pred_x, 0, boundary)
+        pred_y = np.insert(pred_y, 0, joined)
+    return train_x, train_y, pred_x, pred_y
+
+
 def qa_figure(qa: dict) -> Figure:
     """A curve of the QA check, with a marker on every retained row."""
     figure = _figure()

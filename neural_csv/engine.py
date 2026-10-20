@@ -17,7 +17,6 @@ from pathlib import Path
 import joblib
 import numpy as np
 import pandas as pd
-from sklearn.base import clone
 from sklearn.compose import ColumnTransformer, TransformedTargetRegressor
 from sklearn.exceptions import ConvergenceWarning
 from sklearn.impute import SimpleImputer
@@ -234,8 +233,8 @@ def train_model(
     learned = combined.dropna(subset=[target]).copy()
     if learned.empty:
         raise ValueError("Every row is missing a target value, so there is nothing to learn.")
-    if len(learned) < 2:
-        raise ValueError("Training needs at least 2 rows with a target value.")
+    if len(learned) < 4:
+        raise ValueError("A 70/30 learning split needs at least 4 rows with a target value.")
 
     chosen_task = infer_task(learned[target]) if task == "auto" else task
     if chosen_task not in {"classification", "regression"}:
@@ -246,47 +245,54 @@ def train_model(
         raise ValueError("Classification needs at least two different target values.")
 
     inputs = _feature_frame(learned, features)
-    pipeline = _build_pipeline(chosen_task, inputs)
+    train_index, test_index = _split_learning_rows(labels, chosen_task)
+    train_x = inputs.iloc[train_index]
+    train_y = labels.iloc[train_index]
+    pipeline = _build_pipeline(chosen_task, inputs, sample_count=len(train_index))
 
     notes: list[str] = []
-    # Small tables (including the supported 10-row case) train on every row so
-    # the network can fit the pattern tightly enough for a later single prediction.
-    train_x, train_y = inputs, labels
     with warnings.catch_warnings(record=True) as caught:
         warnings.simplefilter("always", ConvergenceWarning)
         pipeline.fit(train_x, train_y)
     if any(issubclass(item.category, ConvergenceWarning) for item in caught):
         notes.append("Training stopped before the network fully converged. Predictions may be weaker.")
 
-    fitted = pipeline.predict(train_x)
-    id_labels = _unique_ids(learned[schema.id_column])
+    held_out = pipeline.predict(inputs.iloc[test_index])
+    test_labels = labels.iloc[test_index]
+    test_ids = _unique_ids(learned[schema.id_column].iloc[test_index])
+    qa = _qa_report(test_ids, test_labels, held_out, chosen_task)
     comparison = {
-        "ids": id_labels,
-        "actual": [_plain(value) for value in labels.tolist()],
-        "predicted": [_plain(value) for value in list(fitted)],
+        "ids": qa["ids"],
+        "actual": qa["actual"],
+        "predicted": qa["predicted"],
         "task": chosen_task,
         "target": target,
-        "source": "training rows",
+        "source": "test rows (30%)",
     }
-    qa = _run_qa(pipeline, inputs, labels, id_labels, chosen_task)
+    notes.append(
+        f"Learning split: {len(train_index)} rows (70%) for training, {qa['total']} rows (30%) for testing."
+    )
     notes.append(
         f"QA testing ({qa['method']}): {qa['passed_count']}/{qa['total']} passed ({qa['rule']})."
     )
     if chosen_task == "classification":
         metrics = {
-            "accuracy": round(float(accuracy_score(train_y, fitted)), 4),
-            "evaluated_on": "training rows",
+            "accuracy": round(float(accuracy_score(test_labels, held_out)), 4),
+            "evaluated_on": "test rows (30%)",
             "rows": int(len(learned)),
+            "train_rows": int(len(train_index)),
+            "test_rows": int(len(test_index)),
         }
     else:
         metrics = {
-            "r2": round(float(r2_score(train_y, fitted)), 4),
-            "mae": round(float(mean_absolute_error(train_y, fitted)), 4),
-            "evaluated_on": "training rows",
+            "mae": round(float(mean_absolute_error(test_labels, held_out)), 4),
+            "evaluated_on": "test rows (30%)",
             "rows": int(len(learned)),
+            "train_rows": int(len(train_index)),
+            "test_rows": int(len(test_index)),
         }
-    if len(learned) <= 10:
-        notes.append("Trained on all rows so a small CSV (for example 10 samples) can still support an accurate prediction.")
+        if len(test_index) >= 2:
+            metrics["r2"] = round(float(r2_score(test_labels, held_out)), 4)
     if accumulate:
         kept = max(len(learned) - added - updated, 0)
         notes.insert(
@@ -316,7 +322,7 @@ def train_model(
             "features": features,
             "metrics": metrics,
             "target_only": len(features) == 0,
-            "fallback_value": _fallback_value(labels, chosen_task),
+            "fallback_value": _fallback_value(train_y, chosen_task),
             "comparison": comparison,
             "qa": qa,
             "reverse_models": _fit_reverse_models(learned, target, features),
@@ -369,6 +375,29 @@ def comparison_for_rows(original: pd.DataFrame, predicted: pd.DataFrame) -> dict
         "task": task,
         "target": predicted_schema.target_column,
         "source": "prediction file",
+    }
+
+
+def forecast_series(predicted: pd.DataFrame) -> dict:
+    """Training-target values followed by the new predictions, for one continuous curve."""
+    history = load_training_history()
+    state = training_state()
+    if history is None or state is None:
+        raise ValueError("No retained training data is available to plot.")
+    target = state["target_column"]
+    if target not in predicted.columns:
+        raise ValueError(f"The prediction is missing the target column {target!r}.")
+    history = history.dropna(subset=[target])
+    if history.empty:
+        raise ValueError("The retained training data has no target values to plot.")
+    pred_id = parse_schema(predicted).id_column
+    return {
+        "train_ids": ["" if pd.isna(value) else str(value) for value in history[state["id_column"]].tolist()],
+        "train_values": [_plain(value) for value in history[target].tolist()],
+        "pred_ids": ["" if pd.isna(value) else str(value) for value in predicted[pred_id].tolist()],
+        "pred_values": [_plain(value) for value in predicted[target].tolist()],
+        "target": target,
+        "task": state["task"],
     }
 
 
@@ -474,7 +503,7 @@ def _fit_reverse_models(learned: pd.DataFrame, target: str, features: list[str])
             continue
         indicator_task = infer_task(pairs[feature])
         inputs = pairs.loc[:, [target]]
-        pipeline = _build_pipeline(indicator_task, inputs)
+        pipeline = _build_pipeline(indicator_task, inputs, sample_count=len(pairs))
         with warnings.catch_warnings():
             warnings.simplefilter("ignore", ConvergenceWarning)
             pipeline.fit(inputs, pairs[feature])
@@ -605,7 +634,7 @@ def _split_column_kinds(frame: pd.DataFrame) -> tuple[list[str], list[str]]:
     return numeric, categorical
 
 
-def _build_pipeline(task: str, inputs: pd.DataFrame) -> Pipeline:
+def _build_pipeline(task: str, inputs: pd.DataFrame, *, sample_count: int | None = None) -> Pipeline:
     numeric_columns, categorical_columns = _split_column_kinds(inputs)
     transformers = []
     if numeric_columns:
@@ -635,27 +664,35 @@ def _build_pipeline(task: str, inputs: pd.DataFrame) -> Pipeline:
             )
         )
 
-    # Compact, regularized network: with about 10 rows, lbfgs + L2 keeps the fit
-    # smooth enough to support an accurate single prediction on similar inputs.
+    rows = len(inputs) if sample_count is None else sample_count
+    # Small tables (for example 10 rows) stay on lbfgs. Larger files, including the
+    # 1,000,000-row sample, use adam so training can finish in reasonable time.
+    if rows > 500:
+        solver = "adam"
+        max_iter = 200
+        early_stopping = True
+    else:
+        solver = "lbfgs"
+        max_iter = 10000
+        early_stopping = False
+    shared = {
+        "hidden_layer_sizes": (24,),
+        "activation": "relu",
+        "solver": solver,
+        "alpha": 1e-3,
+        "max_iter": max_iter,
+        "random_state": 42,
+    }
+    if early_stopping:
+        shared["early_stopping"] = True
+        shared["validation_fraction"] = 0.1
+        shared["n_iter_no_change"] = 10
+
     if task == "classification":
-        network = MLPClassifier(
-            hidden_layer_sizes=(24,),
-            activation="relu",
-            solver="lbfgs",
-            alpha=1e-3,
-            max_iter=10000,
-            random_state=42,
-        )
+        network = MLPClassifier(**shared)
     else:
         network = TransformedTargetRegressor(
-            regressor=MLPRegressor(
-                hidden_layer_sizes=(24,),
-                activation="relu",
-                solver="lbfgs",
-                alpha=1e-3,
-                max_iter=10000,
-                random_state=42,
-            ),
+            regressor=MLPRegressor(**shared),
             transformer=StandardScaler(),
         )
     return Pipeline(
@@ -699,61 +736,59 @@ def _qa_passed(task: str, actual, predicted) -> bool:
     return abs(float(predicted) - float(actual)) / scale <= 0.05
 
 
-def _predict_held_out(pipeline: Pipeline, inputs: pd.DataFrame, labels: pd.Series, hold_index: int, task: str):
-    mask = np.ones(len(labels), dtype=bool)
-    mask[hold_index] = False
-    remaining = labels.iloc[mask]
-    if task == "classification" and remaining.nunique() < 2:
-        return _plain(remaining.mode(dropna=True).iloc[0])
-    model = clone(pipeline)
+def _split_learning_rows(labels: pd.Series, task: str) -> tuple[np.ndarray, np.ndarray]:
+    """Hold out 30% of the rows. The network trains on the other 70%."""
+    indices = np.arange(len(labels))
+    stratify = labels if task == "classification" else None
     try:
-        with warnings.catch_warnings():
-            warnings.simplefilter("ignore", ConvergenceWarning)
-            model.fit(inputs.iloc[mask], remaining)
-        return _plain(model.predict(inputs.iloc[[hold_index]])[0])
-    except Exception:
-        return None
+        train_index, test_index = train_test_split(
+            indices, test_size=0.3, random_state=42, stratify=stratify
+        )
+    except ValueError:
+        train_index, test_index = train_test_split(indices, test_size=0.3, random_state=42)
+    test_index = np.sort(test_index)
+    return train_index, test_index
 
 
-def _run_qa(pipeline: Pipeline, inputs: pd.DataFrame, labels: pd.Series, id_labels: list[str], task: str) -> dict:
-    """Score rows the fitted network did not train on.
-
-    Up to 30 rows use leave-one-out. Larger tables use a 20% holdout.
-    """
-    count = len(labels)
-    rule = "exact label match" if task == "classification" else "relative error ≤ 5%"
-    if count <= 30:
-        method = "leave-one-out"
-        predicted = [_predict_held_out(pipeline, inputs, labels, index, task) for index in range(count)]
-        actual = [_plain(value) for value in labels.tolist()]
-        ids = list(id_labels)
-    else:
-        method = "holdout 20%"
-        indices = np.arange(count)
-        stratify = labels if task == "classification" else None
-        try:
-            train_index, test_index = train_test_split(
-                indices, test_size=0.2, random_state=42, stratify=stratify
-            )
-        except ValueError:
-            train_index, test_index = train_test_split(indices, test_size=0.2, random_state=42)
-        model = clone(pipeline)
-        with warnings.catch_warnings():
-            warnings.simplefilter("ignore", ConvergenceWarning)
-            model.fit(inputs.iloc[train_index], labels.iloc[train_index])
-        held_out = model.predict(inputs.iloc[test_index])
-        ids = [id_labels[index] for index in test_index]
-        actual = [_plain(value) for value in labels.iloc[test_index].tolist()]
-        predicted = [_plain(value) for value in held_out]
+def _qa_report(ids: list[str], test_labels: pd.Series, held_out, task: str) -> dict:
+    """Score the 30% of rows the fitted network did not train on."""
+    actual = [_plain(value) for value in test_labels.tolist()]
+    predicted = [_plain(value) for value in held_out]
     passed = [_qa_passed(task, left, right) for left, right in zip(actual, predicted)]
+    rule = "exact label match" if task == "classification" else "relative error ≤ 5%"
+    passed_count = int(sum(passed))
+    total = len(passed)
+    # Keep the full pass rate, but only draw a sample so large files stay usable.
+    chart_ids, chart_actual, chart_predicted, chart_passed = _sample_qa_series(
+        ids, actual, predicted, passed, limit=200
+    )
     return {
-        "ids": ids,
-        "actual": actual,
-        "predicted": predicted,
-        "passed": passed,
-        "method": method,
-        "passed_count": int(sum(passed)),
-        "total": len(passed),
+        "ids": chart_ids,
+        "actual": chart_actual,
+        "predicted": chart_predicted,
+        "passed": chart_passed,
+        "method": "holdout 30%",
+        "passed_count": passed_count,
+        "total": total,
         "task": task,
         "rule": rule,
     }
+
+
+def _sample_qa_series(
+    ids: list[str],
+    actual: list,
+    predicted: list,
+    passed: list[bool],
+    *,
+    limit: int,
+) -> tuple[list[str], list, list, list[bool]]:
+    if len(ids) <= limit:
+        return ids, actual, predicted, passed
+    pick = np.linspace(0, len(ids) - 1, limit, dtype=int)
+    return (
+        [ids[index] for index in pick],
+        [actual[index] for index in pick],
+        [predicted[index] for index in pick],
+        [passed[index] for index in pick],
+    )

@@ -1,0 +1,1 @@
+py -3 data/generate_sample_houses_1m.py

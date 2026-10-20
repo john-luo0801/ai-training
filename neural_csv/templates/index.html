@@ -1,0 +1,567 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Neural CSV</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet" />
+  <script src="https://cdn.tailwindcss.com"></script>
+  <script>
+    tailwind.config = {
+      theme: {
+        extend: {
+          fontFamily: { sans: ["Inter", "ui-sans-serif", "system-ui", "sans-serif"] },
+        },
+      },
+    };
+  </script>
+  <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.6/dist/chart.umd.min.js"></script>
+</head>
+<body class="min-h-screen bg-zinc-100 font-sans text-zinc-950 antialiased">
+  <div class="flex min-h-screen">
+    <aside class="hidden w-64 shrink-0 flex-col bg-zinc-950 text-zinc-300 md:flex">
+      <div class="flex h-14 items-center border-b border-white/10 px-5">
+        <div>
+          <p class="text-sm font-semibold tracking-tight text-white">Neural CSV</p>
+          <p class="text-xs text-zinc-400">Tabular model</p>
+        </div>
+      </div>
+      <div class="flex flex-1 flex-col gap-6 p-4">
+        <button id="open-side" type="button" class="inline-flex h-9 items-center justify-center rounded-md bg-white px-3 text-sm font-medium text-zinc-950 hover:bg-zinc-200">Open CSV</button>
+        <div class="space-y-2 text-xs leading-5 text-zinc-400">
+          <p class="font-medium uppercase tracking-wide text-zinc-500">File layout</p>
+          <p>Column 1 is the ID.</p>
+          <p>Column 2 is the target.</p>
+          <p>Later columns are indicators.</p>
+        </div>
+        <div id="side-file" class="hidden rounded-lg border border-white/10 bg-white/5 p-3 text-xs">
+          <p class="truncate font-medium text-white" id="side-name"></p>
+          <p class="mt-1 text-zinc-400" id="side-meta"></p>
+        </div>
+      </div>
+      <div class="border-t border-white/10 p-4">
+        <button id="reset-side" type="button" class="h-9 w-full rounded-md border border-red-400/40 text-sm text-red-300 hover:bg-red-500/10">Reset system</button>
+      </div>
+    </aside>
+
+    <div class="flex min-w-0 flex-1 flex-col">
+      <header class="flex h-14 items-center justify-between gap-3 border-b border-zinc-200 bg-white px-4 md:px-6">
+        <div class="min-w-0">
+          <h1 class="truncate text-sm font-semibold tracking-tight">Workspace</h1>
+          <p id="status-line" class="truncate text-xs text-zinc-500">No model saved yet.</p>
+        </div>
+        <div class="flex shrink-0 items-center gap-2">
+          <button id="open-top" type="button" class="inline-flex h-9 items-center rounded-md bg-zinc-900 px-3 text-sm font-medium text-white hover:bg-zinc-800 md:hidden">Open CSV</button>
+          <button id="reset-top" type="button" class="inline-flex h-9 items-center rounded-md border border-zinc-200 bg-white px-3 text-sm text-red-700 hover:bg-red-50 md:hidden">Reset</button>
+        </div>
+      </header>
+
+      <main class="flex flex-1 flex-col gap-6 p-4 md:p-6">
+        <section id="empty" class="flex flex-1 items-center justify-center">
+          <div class="w-full max-w-lg rounded-xl border border-dashed border-zinc-300 bg-white px-8 py-14 text-center shadow-sm">
+            <p class="text-lg font-semibold tracking-tight">Open a CSV file</p>
+            <p class="mx-auto mt-2 max-w-sm text-sm leading-6 text-zinc-500">Column 1 is the ID, column 2 is the value to learn, and every column after that is an indicator.</p>
+            <button id="open-empty" type="button" class="mt-6 inline-flex h-10 items-center rounded-md bg-zinc-900 px-4 text-sm font-medium text-white hover:bg-zinc-800">Choose file</button>
+          </div>
+        </section>
+
+        <section id="workspace" class="hidden space-y-6">
+          <div class="grid gap-4 sm:grid-cols-3">
+            <article class="rounded-xl border border-zinc-200 bg-white p-4 shadow-sm">
+              <p class="text-xs font-medium uppercase tracking-wide text-zinc-500">Rows</p>
+              <p id="stat-rows" class="mt-2 text-2xl font-semibold tracking-tight">—</p>
+            </article>
+            <article class="rounded-xl border border-zinc-200 bg-white p-4 shadow-sm">
+              <p class="text-xs font-medium uppercase tracking-wide text-zinc-500">Target</p>
+              <p id="stat-target" class="mt-2 truncate text-2xl font-semibold tracking-tight">—</p>
+            </article>
+            <article class="rounded-xl border border-zinc-200 bg-white p-4 shadow-sm">
+              <p class="text-xs font-medium uppercase tracking-wide text-zinc-500">Retained rows</p>
+              <p id="stat-retained" class="mt-2 text-2xl font-semibold tracking-tight">—</p>
+            </article>
+          </div>
+
+          <div class="grid gap-3 lg:grid-cols-3">
+            <button type="button" data-mode="train" class="mode rounded-xl border border-zinc-200 bg-white p-4 text-left shadow-sm hover:border-zinc-400 disabled:cursor-not-allowed disabled:opacity-50">
+              <p class="text-sm font-semibold">Train</p>
+              <p class="mt-1 text-sm leading-5 text-zinc-500">Learn from this file and keep every previous training row.</p>
+            </button>
+            <button type="button" data-mode="predict" class="mode rounded-xl border border-zinc-200 bg-white p-4 text-left shadow-sm hover:border-zinc-400 disabled:cursor-not-allowed disabled:opacity-50">
+              <p class="text-sm font-semibold">Predict</p>
+              <p class="mt-1 text-sm leading-5 text-zinc-500">Fill the target from the saved network.</p>
+            </button>
+            <button type="button" data-mode="reverse" class="mode rounded-xl border border-zinc-200 bg-white p-4 text-left shadow-sm hover:border-zinc-400 disabled:cursor-not-allowed disabled:opacity-50">
+              <p class="text-sm font-semibold">Reverse forecast</p>
+              <p class="mt-1 text-sm leading-5 text-zinc-500">Predict each indicator from the target. This file is not used for training.</p>
+            </button>
+          </div>
+
+          <section id="busy-banner" class="hidden rounded-xl border border-sky-200 bg-sky-50 px-5 py-4 text-sm text-sky-950 shadow-sm">
+            <div class="flex items-center gap-3">
+              <span class="inline-block h-4 w-4 animate-spin rounded-full border-2 border-sky-700 border-r-transparent"></span>
+              <p id="busy-text" class="font-medium"></p>
+            </div>
+          </section>
+
+          <section id="panel" class="hidden rounded-xl border border-zinc-200 bg-white shadow-sm">
+            <div class="border-b border-zinc-200 px-5 py-4">
+              <h2 id="panel-title" class="text-base font-semibold tracking-tight"></h2>
+              <p id="panel-copy" class="mt-1 text-sm text-zinc-500"></p>
+            </div>
+            <div id="panel-body" class="space-y-4 p-5"></div>
+          </section>
+
+          <section id="qa-card" class="hidden rounded-xl border border-zinc-200 bg-white p-5 shadow-sm">
+            <div class="mb-4">
+              <h2 class="text-base font-semibold tracking-tight">QA test</h2>
+              <p id="qa-copy" class="mt-1 text-sm text-zinc-500"></p>
+            </div>
+            <div class="h-80 min-h-[220px]">
+              <canvas id="qa-chart"></canvas>
+            </div>
+          </section>
+
+          <section id="chart-card" class="hidden rounded-xl border border-zinc-200 bg-white p-5 shadow-sm">
+            <div class="mb-4 flex items-end justify-between gap-4">
+              <div>
+                <h2 class="text-base font-semibold tracking-tight">Prediction</h2>
+                <p class="mt-1 text-sm text-zinc-500">One continuous line. Zinc is retained training data. Sky is the prediction.</p>
+              </div>
+            </div>
+            <div class="h-80 min-h-[220px]">
+              <canvas id="chart"></canvas>
+            </div>
+          </section>
+
+          <section class="overflow-hidden rounded-xl border border-zinc-200 bg-white shadow-sm">
+            <div class="flex items-center justify-between border-b border-zinc-200 px-5 py-3">
+              <h2 class="text-sm font-semibold">Data</h2>
+              <p id="table-count" class="text-xs text-zinc-500"></p>
+            </div>
+            <div class="min-h-[220px] max-h-[min(420px,50vh)] overflow-auto">
+              <table class="min-w-full border-separate border-spacing-0 text-left text-sm">
+                <thead class="sticky top-0 z-10 bg-zinc-950 text-white">
+                  <tr id="head-row"></tr>
+                </thead>
+                <tbody id="body-rows" class="bg-white"></tbody>
+              </table>
+            </div>
+          </section>
+        </section>
+
+        <div id="alert" class="hidden rounded-lg border px-4 py-3 text-sm"></div>
+      </main>
+    </div>
+  </div>
+
+  <div id="toasts" class="pointer-events-none fixed right-4 top-4 z-[60] flex w-full max-w-sm flex-col gap-2"></div>
+
+  <input id="file" type="file" accept=".csv,text/csv" class="hidden" />
+
+  <div id="modal" class="fixed inset-0 z-50 hidden items-center justify-center bg-zinc-950/50 p-4">
+    <div class="w-full max-w-md rounded-xl border border-zinc-200 bg-white p-6 shadow-xl">
+      <h2 class="text-base font-semibold tracking-tight">Reset system</h2>
+      <p class="mt-2 text-sm leading-6 text-zinc-500">Delete all retained training rows and the saved model? This is the only way to clear them, and it cannot be undone.</p>
+      <div class="mt-6 flex justify-end gap-2">
+        <button id="reset-cancel" type="button" class="h-9 rounded-md border border-zinc-200 px-3 text-sm hover:bg-zinc-50">Cancel</button>
+        <button id="reset-confirm" type="button" class="h-9 rounded-md bg-red-700 px-3 text-sm font-medium text-white hover:bg-red-800">Delete saved data</button>
+      </div>
+    </div>
+  </div>
+
+  <script>
+    const state = {
+      mode: null,
+      indicators: [],
+      selected: new Set(),
+      task: "auto",
+      busy: false,
+      showQa: false,
+    };
+    const esc = (value) => String(value ?? "").replace(/[&<>"']/g, (ch) => ({
+      "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;",
+    }[ch]));
+    let chart;
+    let qaChart;
+
+    const $ = (id) => document.getElementById(id);
+
+    function toast(text, kind = "info") {
+      const box = document.createElement("div");
+      const tone = kind === "error"
+        ? "border-red-200 bg-red-50 text-red-900"
+        : kind === "ok"
+          ? "border-emerald-200 bg-emerald-50 text-emerald-900"
+          : "border-zinc-200 bg-white text-zinc-900";
+      box.className = `pointer-events-auto rounded-xl border px-4 py-3 text-sm shadow-lg ${tone}`;
+      box.textContent = text;
+      $("toasts").appendChild(box);
+      setTimeout(() => {
+        box.classList.add("opacity-0", "transition-opacity", "duration-300");
+        setTimeout(() => box.remove(), 300);
+      }, 3500);
+    }
+
+    function showAlert(text, kind) {
+      const box = $("alert");
+      box.className = kind === "error"
+        ? "rounded-lg border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-800"
+        : "rounded-lg border border-zinc-200 bg-white px-4 py-3 text-sm text-zinc-700";
+      box.textContent = text;
+      box.classList.remove("hidden");
+    }
+
+    function setBusy(busy, label = "") {
+      state.busy = busy;
+      $("busy-banner").classList.toggle("hidden", !busy);
+      $("busy-text").textContent = label;
+      document.querySelectorAll(".mode").forEach((button) => {
+        button.disabled = busy;
+      });
+      ["open-side", "open-top", "open-empty", "reset-side", "reset-top"].forEach((id) => {
+        const node = $(id);
+        if (node) node.disabled = busy;
+      });
+      ["run-train", "run-predict", "run-reverse", "task", "use-all", "clear-all"].forEach((id) => {
+        const node = $(id);
+        if (!node) return;
+        node.disabled = busy;
+        if (id.startsWith("run-") && busy) {
+          node.classList.add("opacity-60", "cursor-not-allowed");
+          node.textContent = label;
+        }
+      });
+      document.querySelectorAll(".indicator").forEach((box) => {
+        box.disabled = busy;
+      });
+    }
+
+    async function api(url, options) {
+      const response = await fetch(url, options);
+      const body = await response.json();
+      if (!response.ok) throw new Error(body.error || "Request failed");
+      return body;
+    }
+
+    function hideQa() {
+      state.showQa = false;
+      $("qa-card").classList.add("hidden");
+      if (qaChart) {
+        qaChart.destroy();
+        qaChart = null;
+      }
+    }
+
+    function render(data, { keepMessage = true } = {}) {
+      const hasFile = Boolean(data.schema);
+      $("empty").classList.toggle("hidden", hasFile);
+      $("workspace").classList.toggle("hidden", !hasFile);
+      $("side-file").classList.toggle("hidden", !hasFile);
+      if (keepMessage && data.message) showAlert(data.message, "ok");
+      const summary = data.summary;
+      $("status-line").textContent = summary
+        ? `${summary.task} → ${summary.target} · ${data.retained_rows} retained rows`
+        : "No model saved yet.";
+      if (!hasFile) {
+        $("chart-card").classList.add("hidden");
+        hideQa();
+        return;
+      }
+      $("side-name").textContent = data.filename;
+      $("side-meta").textContent = `${data.schema.rows} rows · ${data.schema.target}`;
+      $("stat-rows").textContent = data.schema.rows;
+      $("stat-target").textContent = data.schema.target;
+      $("stat-retained").textContent = data.retained_rows;
+      state.indicators = data.indicators;
+      if (state.selected.size === 0) state.selected = new Set(data.selected_indicators);
+      renderTable(data.columns, data.rows);
+      if (state.showQa && data.qa) {
+        $("qa-card").classList.remove("hidden");
+        drawQa(data.qa);
+      } else {
+        $("qa-card").classList.add("hidden");
+      }
+      if (data.forecast) {
+        $("chart-card").classList.remove("hidden");
+        drawChart(data.forecast);
+      } else {
+        $("chart-card").classList.add("hidden");
+      }
+    }
+
+    function renderTable(columns, rows) {
+      $("table-count").textContent = `${rows.length} shown`;
+      $("head-row").innerHTML = columns.map((column) => `<th class="whitespace-nowrap px-3 py-2 text-xs font-medium">${esc(column)}</th>`).join("");
+      $("body-rows").innerHTML = rows.map((row, index) => {
+        const tone = index % 2 ? "bg-zinc-50" : "bg-white";
+        const cells = columns.map((column) => `<td class="whitespace-nowrap px-3 py-2 text-zinc-700">${esc(row[column])}</td>`).join("");
+        return `<tr class="${tone} border-b border-zinc-100">${cells}</tr>`;
+      }).join("");
+    }
+
+    function drawQa(qa) {
+      const numeric = [...qa.actual, ...qa.predicted].every((value) => typeof value === "number");
+      const actual = numeric ? qa.actual : qa.actual.map(String);
+      const predicted = numeric ? qa.predicted : qa.predicted.map(String);
+      const pointColor = qa.passed.map((flag) => (flag ? "#15803d" : "#b91c1c"));
+      const chartNote = qa.ids.length < qa.total
+        ? ` The graph shows ${qa.ids.length} of those test rows.`
+        : "";
+      $("qa-copy").textContent = `70% of the rows trained the network. ${qa.total} rows (30%) were held out. ${qa.passed_count}/${qa.total} passed (${qa.rule}).${chartNote}`;
+      if (qaChart) qaChart.destroy();
+      qaChart = new Chart($("qa-chart"), {
+        type: "line",
+        data: {
+          labels: qa.ids,
+          datasets: [
+            {
+              label: "Actual test value",
+              data: actual,
+              borderColor: "#18181b",
+              backgroundColor: "#18181b",
+              borderWidth: 2,
+              pointRadius: 3,
+              tension: 0.35,
+            },
+            {
+              label: "Predicted",
+              data: predicted,
+              borderColor: "#0369a1",
+              backgroundColor: pointColor,
+              pointBorderColor: pointColor,
+              borderWidth: 2,
+              pointRadius: 5,
+              tension: 0.35,
+            },
+          ],
+        },
+        options: {
+          responsive: true,
+          maintainAspectRatio: false,
+          plugins: { legend: { labels: { color: "#3f3f46", boxWidth: 12, font: { family: "Inter" } } } },
+          scales: {
+            x: { title: { display: true, text: "Held-out record", color: "#3f3f46" }, ticks: { color: "#71717a", maxRotation: 40 }, grid: { display: false } },
+            y: { ticks: { color: "#71717a" }, grid: { color: "#f4f4f5" } },
+          },
+        },
+      });
+    }
+
+    function drawChart(series) {
+      const labels = [...series.train_ids, ...series.pred_ids];
+      const numeric = [...series.train_values, ...series.pred_values].every((value) => typeof value === "number");
+      const train = numeric ? series.train_values : series.train_values.map(String);
+      const pred = numeric ? series.pred_values : series.pred_values.map(String);
+      const trainLine = [...train, ...Array(pred.length).fill(null)];
+      const predLine = [...Array(Math.max(train.length - 1, 0)).fill(null), ...(train.length ? [train.at(-1)] : []), ...pred];
+      if (chart) chart.destroy();
+      chart = new Chart($("chart"), {
+        type: "line",
+        data: {
+          labels,
+          datasets: [
+            {
+              label: "Training data",
+              data: trainLine,
+              borderColor: "#18181b",
+              backgroundColor: "#18181b",
+              borderWidth: 2,
+              pointRadius: 3,
+              tension: 0.35,
+              spanGaps: false,
+            },
+            {
+              label: "Predicted",
+              data: predLine,
+              borderColor: "#0369a1",
+              backgroundColor: "#0369a1",
+              borderWidth: 2,
+              pointRadius: 4,
+              tension: 0.35,
+              spanGaps: false,
+            },
+          ],
+        },
+        options: {
+          responsive: true,
+          maintainAspectRatio: false,
+          plugins: { legend: { labels: { color: "#3f3f46", boxWidth: 12, font: { family: "Inter" } } } },
+          scales: {
+            x: { ticks: { color: "#71717a", maxRotation: 40 }, grid: { display: false } },
+            y: { title: { display: true, text: series.target, color: "#3f3f46" }, ticks: { color: "#71717a" }, grid: { color: "#f4f4f5" } },
+          },
+        },
+      });
+    }
+
+    function selectMode(mode) {
+      if (state.busy) return;
+      state.mode = mode;
+      document.querySelectorAll(".mode").forEach((button) => {
+        const on = button.dataset.mode === mode;
+        button.classList.toggle("ring-2", on);
+        button.classList.toggle("ring-zinc-900", on);
+      });
+      const panel = $("panel");
+      panel.classList.remove("hidden");
+      const title = $("panel-title");
+      const copy = $("panel-copy");
+      const body = $("panel-body");
+      if (mode === "train") {
+        title.textContent = "Training";
+        copy.textContent = "70% of the retained rows train the network. The other 30% stay out as a QA test, and that result is drawn after training.";
+        const checks = state.indicators.map((name) => `
+          <label class="flex items-center gap-2 rounded-md px-2 py-1.5 text-sm hover:bg-zinc-50">
+            <input type="checkbox" value="${esc(name)}" class="indicator h-4 w-4 rounded border-zinc-300" ${state.selected.has(name) ? "checked" : ""} />
+            <span>${esc(name)}</span>
+          </label>`).join("");
+        body.innerHTML = `
+          <label class="block text-sm font-medium">Problem type
+            <select id="task" class="mt-1 h-9 w-full max-w-xs rounded-md border border-zinc-200 bg-white px-2 text-sm">
+              <option value="auto">Auto</option>
+              <option value="classification">Classification</option>
+              <option value="regression">Regression</option>
+            </select>
+          </label>
+          <div>
+            <p class="text-sm font-medium">Indicators</p>
+            <div class="mt-2 max-h-48 overflow-auto rounded-md border border-zinc-200 p-2">${checks || "<p class='px-2 py-1 text-sm text-zinc-500'>No indicators. Training will use the target column only.</p>"}</div>
+            <div class="mt-3 flex gap-2">
+              <button id="use-all" type="button" class="h-8 rounded-md border border-zinc-200 px-3 text-xs hover:bg-zinc-50">Use all</button>
+              <button id="clear-all" type="button" class="h-8 rounded-md border border-zinc-200 px-3 text-xs hover:bg-zinc-50">Clear</button>
+            </div>
+          </div>
+          <button id="run-train" type="button" class="h-9 rounded-md bg-zinc-900 px-4 text-sm font-medium text-white hover:bg-zinc-800 disabled:cursor-not-allowed disabled:opacity-60">Train network</button>`;
+        $("task").value = state.task;
+        $("task").onchange = () => { state.task = $("task").value; };
+        body.querySelectorAll(".indicator").forEach((box) => {
+          box.onchange = () => {
+            if (box.checked) state.selected.add(box.value);
+            else state.selected.delete(box.value);
+          };
+        });
+        $("use-all").onclick = () => { if (!state.busy) { state.selected = new Set(state.indicators); selectMode("train"); } };
+        $("clear-all").onclick = () => { if (!state.busy) { state.selected = new Set(); selectMode("train"); } };
+        $("run-train").onclick = runTrain;
+      } else if (mode === "predict") {
+        title.textContent = "Predict the target";
+        copy.textContent = "The saved network fills column 2. The graph then shows training data and these predictions as one line.";
+        body.innerHTML = `<button id="run-predict" type="button" class="h-9 rounded-md bg-zinc-900 px-4 text-sm font-medium text-white hover:bg-zinc-800 disabled:cursor-not-allowed disabled:opacity-60">Run predictions</button>`;
+        $("run-predict").onclick = runPredict;
+      } else {
+        title.textContent = "Reverse forecast";
+        copy.textContent = "Each indicator is predicted from the target using the retained training rows. This file is not added to training.";
+        body.innerHTML = `<button id="run-reverse" type="button" class="h-9 rounded-md bg-zinc-900 px-4 text-sm font-medium text-white hover:bg-zinc-800 disabled:cursor-not-allowed disabled:opacity-60">Run reverse forecast</button>`;
+        $("run-reverse").onclick = runReverse;
+      }
+    }
+
+    async function runTrain() {
+      if (state.busy) return;
+      toast("Training started…");
+      setBusy(true, "Training in progress…");
+      try {
+        const data = await api("/api/train", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ features: [...state.selected], task: state.task }),
+        });
+        state.showQa = Boolean(data.qa);
+        render(data);
+        toast("Training finished.", "ok");
+      } catch (error) {
+        toast(error.message, "error");
+        showAlert(error.message, "error");
+      } finally {
+        setBusy(false);
+        selectMode("train");
+      }
+    }
+
+    async function runPredict() {
+      if (state.busy) return;
+      toast("Prediction started…");
+      setBusy(true, "Prediction in progress…");
+      hideQa();
+      try {
+        const data = await api("/api/predict", { method: "POST" });
+        render(data);
+        toast("Prediction finished.", "ok");
+      } catch (error) {
+        toast(error.message, "error");
+        showAlert(error.message, "error");
+      } finally {
+        setBusy(false);
+        selectMode("predict");
+      }
+    }
+
+    async function runReverse() {
+      if (state.busy) return;
+      toast("Reverse forecast started…");
+      setBusy(true, "Reverse forecast in progress…");
+      hideQa();
+      try {
+        const data = await api("/api/reverse", { method: "POST" });
+        render(data);
+        toast("Reverse forecast finished.", "ok");
+      } catch (error) {
+        toast(error.message, "error");
+        showAlert(error.message, "error");
+      } finally {
+        setBusy(false);
+        selectMode("reverse");
+      }
+    }
+
+    async function openFile(file) {
+      if (state.busy) return;
+      const form = new FormData();
+      form.append("file", file);
+      try {
+        state.selected = new Set();
+        state.mode = null;
+        hideQa();
+        $("panel").classList.add("hidden");
+        render(await api("/api/open", { method: "POST", body: form }));
+      } catch (error) {
+        toast(error.message, "error");
+        showAlert(error.message, "error");
+      }
+    }
+
+    function askReset() {
+      if (state.busy) return;
+      $("modal").classList.remove("hidden");
+      $("modal").classList.add("flex");
+    }
+
+    $("file").onchange = () => { if ($("file").files[0]) openFile($("file").files[0]); };
+    ["open-side", "open-top", "open-empty"].forEach((id) => $(id).onclick = () => { if (!state.busy) $("file").click(); });
+    ["reset-side", "reset-top"].forEach((id) => $(id).onclick = askReset);
+    $("reset-cancel").onclick = () => { $("modal").classList.add("hidden"); $("modal").classList.remove("flex"); };
+    $("reset-confirm").onclick = async () => {
+      $("modal").classList.add("hidden");
+      $("modal").classList.remove("flex");
+      try {
+        state.selected = new Set();
+        hideQa();
+        render(await api("/api/reset", { method: "POST" }));
+      } catch (error) {
+        toast(error.message, "error");
+        showAlert(error.message, "error");
+      }
+    };
+    document.querySelectorAll(".mode").forEach((button) => {
+      button.onclick = () => selectMode(button.dataset.mode);
+    });
+
+    api("/api/status").then((data) => render(data, { keepMessage: false })).catch((error) => {
+      toast(error.message, "error");
+      showAlert(error.message, "error");
+    });
+  </script>
+</body>
+</html>
