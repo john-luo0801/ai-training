@@ -48,6 +48,24 @@ http://127.0.0.1:8765
 
 To stop the program, go back to the terminal window and press `Ctrl+C`.
 
+### Or build a standalone `.exe` (no Python needed to run it)
+
+Double-click **`build_exe.bat`**. It installs the dependencies (including
+PyInstaller), packages the current code — page templates and the bundled
+offline resources included — and creates:
+
+```
+dist\NeuralCSV.exe
+```
+
+Double-click that file to start Neural CSV. You can copy it to another
+Windows PC; Python is not needed there. Whenever you change the code, run
+`build_exe.bat` again to rebuild the `.exe` from the updated code.
+
+> The `.exe` keeps your saved model and retained training rows in a
+> `models` folder **next to the .exe file**, so they survive restarts.
+> Don't delete that folder unless you want to start over.
+
 ---
 
 ## 3. The CSV format — the only rule that matters
@@ -224,6 +242,8 @@ retrains from the saved rows so the model always matches the history.
 | --- | --- |
 | `main.py` | The file you run. It starts the web page. |
 | `RUN.bat` | Same thing, by double-clicking. |
+| `build_exe.bat` | Builds `dist\NeuralCSV.exe` from the current code with PyInstaller. |
+| `NeuralCSV.spec`, `build/`, `dist/` | Created by the `.exe` build. Safe to delete; `build_exe.bat` recreates them. |
 | `neural_csv/engine.py` | All the learning logic: reading CSVs, training, predicting, reverse forecasting, saving history. |
 | `neural_csv/web.py` | The local web server and its API (runs on port 8765). |
 | `neural_csv/templates/index.html` | The page you see — layout, colours, charts, buttons. Styled with Tailwind. |

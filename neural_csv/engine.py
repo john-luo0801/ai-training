@@ -9,6 +9,7 @@ Expected CSV layout:
 from __future__ import annotations
 
 import csv
+import sys
 import time
 import warnings
 from dataclasses import dataclass, field
@@ -26,7 +27,12 @@ from sklearn.neural_network import MLPClassifier, MLPRegressor
 from sklearn.pipeline import Pipeline
 from sklearn.preprocessing import OneHotEncoder, StandardScaler
 
-_DEFAULT_MODEL_DIR = Path(__file__).resolve().parent.parent / "models"
+if getattr(sys, "frozen", False):
+    # Packaged .exe: keep saved models next to the executable so retained
+    # training rows survive restarts (the extraction folder is temporary).
+    _DEFAULT_MODEL_DIR = Path(sys.executable).resolve().parent / "models"
+else:
+    _DEFAULT_MODEL_DIR = Path(__file__).resolve().parent.parent / "models"
 MODEL_PATH = _DEFAULT_MODEL_DIR / "model.joblib"
 HISTORY_PATH = _DEFAULT_MODEL_DIR / "training_history.csv"
 STATE_PATH = _DEFAULT_MODEL_DIR / "training_state.joblib"
