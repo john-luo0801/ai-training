@@ -26,11 +26,12 @@ explains the few places worth editing, one at a time.
 You need Python 3 installed. Then, in the project folder:
 
 ```powershell
-py -3 -m pip install -r requirements.txt
+py -3 -m pip install --no-index --find-links vendor\python -r requirements.txt
 py -3 main.py
 ```
 
-Or just double-click **`RUN.bat`**.
+Or just double-click **`install_deps.bat`**, then **`RUN.bat`**.
+(`RUN.bat` also installs from the local package registry before starting.)
 
 Your browser opens at:
 
@@ -42,17 +43,18 @@ http://127.0.0.1:8765
 >
 > 1. Use `py -3`, not `python`. On many Windows machines `python` opens the
 >    Microsoft Store instead of running your code.
-> 2. No internet connection is needed. The page styling (Tailwind), charts
->    (Chart.js), and the Inter font are bundled with the program in
->    `neural_csv/static/vendor/` and served locally.
+> 2. No internet connection is needed for normal use. Python packages from
+>    `requirements.txt` are stored in `vendor/python/`, and the page styling
+>    (Tailwind), charts (Chart.js), and the Inter font are in
+>    `neural_csv/static/vendor/`.
 
 To stop the program, go back to the terminal window and press `Ctrl+C`.
 
 ### Or build a standalone `.exe` (no Python needed to run it)
 
 Double-click **`build_exe.bat`**. It installs the dependencies (including
-PyInstaller), packages the current code — page templates and the bundled
-offline resources included — and creates:
+PyInstaller) from `vendor\python`, packages the current code — page
+templates and the bundled offline resources included — and creates:
 
 ```
 dist\NeuralCSV.exe
@@ -241,9 +243,12 @@ retrains from the saved rows so the model always matches the history.
 | File / folder | What it is |
 | --- | --- |
 | `main.py` | The file you run. It starts the web page. |
-| `RUN.bat` | Same thing, by double-clicking. |
+| `RUN.bat` | Installs packages from the local registry (if present), then starts the page. |
+| `install_deps.bat` | Installs everything in `requirements.txt` from `vendor\python` (offline). |
 | `build_exe.bat` | Builds `dist\NeuralCSV.exe` from the current code with PyInstaller. |
 | `NeuralCSV.spec`, `build/`, `dist/` | Created by the `.exe` build. Safe to delete; `build_exe.bat` recreates them. |
+| `requirements.txt` | The list of Python packages the program needs. |
+| `vendor/python/` | Local package registry: wheel files for every entry in `requirements.txt` (plus PyInstaller), so installs work offline. |
 | `neural_csv/engine.py` | All the learning logic: reading CSVs, training, predicting, reverse forecasting, saving history. |
 | `neural_csv/web.py` | The local web server and its API (runs on port 8765). |
 | `neural_csv/templates/index.html` | The page you see — layout, colours, charts, buttons. Styled with Tailwind. |
@@ -372,6 +377,7 @@ folder (`tests/_tmp`), so they do not touch your saved model.
 | --- | --- |
 | `'python' is not recognized` or the Microsoft Store opens | Use `py -3` instead of `python`. |
 | Page opens but looks unstyled | Hard-refresh the browser (Ctrl+F5) so it drops the old cached page. The styling is bundled locally, so no connection is needed. |
+| `pip` cannot find packages / no internet | Use `install_deps.bat`, or: `py -3 -m pip install --no-index --find-links vendor\python -r requirements.txt`. If `vendor\python` is empty, run `py -3 data\download_vendor_packages.py` once while online. |
 | `Address already in use` / port 8765 busy | The program is already running in another window, or change the port (see Customize). |
 | “This file is missing prediction variables…” | Your prediction file has fewer indicator columns than the model was trained on. Add the missing columns (values can be blank for reverse forecasting, but prediction needs them filled). |
 | Training says it needs at least 4 rows | Add more rows with a target value — the 70 / 30 split needs a few rows on each side. |

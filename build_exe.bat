@@ -16,10 +16,15 @@ if errorlevel 1 (
     goto :failed
 )
 
-echo [1/3] Installing dependencies (this also picks up code changes)...
-py -3 -m pip install --upgrade pip
-if errorlevel 1 goto :failed
-py -3 -m pip install -r requirements.txt pyinstaller
+if not exist "vendor\python\*.whl" (
+    echo [ERROR] vendor\python has no wheel files.
+    echo Run:  py -3 data\download_vendor_packages.py
+    echo then try again.
+    goto :failed
+)
+
+echo [1/3] Installing dependencies from the local vendor\python registry...
+py -3 -m pip install --no-index --find-links vendor\python -r requirements.txt pyinstaller
 if errorlevel 1 goto :failed
 
 echo.
